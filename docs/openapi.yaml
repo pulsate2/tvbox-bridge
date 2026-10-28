@@ -1,0 +1,631 @@
+openapi: 3.0.3
+info:
+  title: tvbox-bridge API
+  version: 1.0.0
+  description: |
+    TVBox / CatVod 解析桥接服务。统一 CMS 站点与 Spider 站点，并提供一步解析出可播放地址的能力。
+
+    **鉴权**：服务端设置 `BRIDGE_TOKEN` / `BRIDGE_TOKENS` 后，除 `/api/health` 外的所有 `/api/*`
+    接口都需要 token。支持 `Authorization: Bearer <token>`、`X-API-Key: <token>`、
+    `?token=<token>`（简写 `?t=`）三种方式。
+
+    `/api/play` 与 `/api/resolve` 返回的 `stream` 会自动带上调用方 token，
+    子清单、分片与 AES key 的改写沿用同一 token，可直接交给 hls.js / `<video>` / ffmpeg。
+servers:
+  - url: http://127.0.0.1:8787
+    description: 本地 / Docker 默认
+  - url: https://bridge.example.com
+    description: 反向代理部署（PUBLIC_BASE_URL）
+
+tags:
+  - name: system
+    description: 健康检查与状态
+  - name: config
+    description: 配置与站点
+  - name: vod
+    description: 点播数据（首页 / 分类 / 搜索 / 详情）
+  - name: play
+    description: 播放地址解析与媒体代理
+
+security:
+  - bearerAuth: []
+  - apiKeyAuth: []
+  - queryToken: []
+
+paths:
+  /api/health:
+    get:
+      tags: [system]
+      summary: 健康检查（公开，无需鉴权）
+      security: []
+      responses:
+        '200':
+          description: 服务正常
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Health' }
+
+  /api/status:
+    get:
+      tags: [system]
+      summary: 运行状态
+      responses:
+        '200':
+          description: 状态
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Status' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/logs:
+    get:
+      tags: [system]
+      summary: companion 最近日志
+      responses:
+        '200':
+          description: 日志行
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  logs:
+                    type: array
+                    items: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/config:
+    post:
+      tags: [config]
+      summary: 加载 / 切换配置（支持多仓）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url]
+              properties:
+                url:
+                  type: string
+                  format: uri
+                  description: TVBox 配置地址
+      responses:
+        '200':
+          description: 普通配置或多仓清单
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/ConfigResult'
+                  - $ref: '#/components/schemas/DepotResult'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '502': { $ref: '#/components/responses/UpstreamError' }
+
+  /api/sites:
+    get:
+      tags: [config]
+      summary: 当前配置的站点列表
+      responses:
+        '200':
+          description: 站点列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  configUrl: { type: string, nullable: true }
+                  sites:
+                    type: array
+                    items: { $ref: '#/components/schemas/Site' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/site/load:
+    post:
+      tags: [config]
+      summary: 预热 Spider 站点（首次约 1 分钟）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SiteRequest' }
+      responses:
+        '200':
+          description: 加载结果
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  error: { type: string }
+                  at: { type: integer, format: int64 }
+                  site: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/home:
+    post:
+      tags: [vod]
+      summary: 站点首页（分类 + 推荐）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [key]
+              properties:
+                key: { type: string, description: 站点 key 或名称 }
+                filter: { type: boolean, default: true }
+      responses:
+        '200':
+          description: 分页数据
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Page' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/SiteError' }
+
+  /api/category:
+    post:
+      tags: [vod]
+      summary: 分类分页列表
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [key, tid]
+              properties:
+                key: { type: string }
+                tid: { type: string, description: "categories[].id" }
+                pg: { type: integer, default: 1 }
+                filter: { type: boolean, default: true }
+      responses:
+        '200':
+          description: 分页数据
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Page' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/SiteError' }
+
+  /api/search:
+    post:
+      tags: [vod]
+      summary: 关键词搜索
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [key, wd]
+              properties:
+                key: { type: string }
+                wd: { type: string, description: 关键词 }
+                quick: { type: boolean, default: false }
+                pg: { type: integer, default: 1 }
+      responses:
+        '200':
+          description: 搜索结果
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Page' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/SiteError' }
+
+  /api/detail:
+    post:
+      tags: [vod]
+      summary: 影片详情与播放线路
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [key, id]
+              properties:
+                key: { type: string }
+                id: { type: string, description: "list[].id" }
+      responses:
+        '200':
+          description: 详情
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DetailResult' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/SiteError' }
+
+  /api/play:
+    post:
+      tags: [play]
+      summary: 按线路 + 选集获取播放地址
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [key, id]
+              properties:
+                key: { type: string }
+                flag: { type: string, description: 线路名，CMS 站点可留空 }
+                id: { type: string, description: "选集地址（episodes[].url）" }
+      responses:
+        '200':
+          description: 播放地址
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlayResult' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/SiteError' }
+
+  /api/resolve:
+    post:
+      tags: [play]
+      summary: 一步解析（片名/ID → 可播放地址）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ResolveRequest' }
+      responses:
+        '200':
+          description: 解析结果
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ResolveResult' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '502': { $ref: '#/components/responses/UpstreamError' }
+    get:
+      tags: [play]
+      summary: 一步解析（GET 形式）
+      parameters:
+        - { in: query, name: site, required: true, schema: { type: string } }
+        - { in: query, name: name, schema: { type: string } }
+        - { in: query, name: id, schema: { type: string } }
+        - { in: query, name: source, schema: { type: string } }
+        - { in: query, name: sourceIndex, schema: { type: integer } }
+        - { in: query, name: episode, schema: { type: string } }
+        - { in: query, name: episodeUrl, schema: { type: string } }
+        - { in: query, name: pick, schema: { type: integer, default: 0 } }
+      responses:
+        '200':
+          description: 解析结果
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ResolveResult' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '502': { $ref: '#/components/responses/UpstreamError' }
+
+  /api/stream:
+    get:
+      tags: [play]
+      summary: 媒体代理（透传 Range，重写 m3u8 内所有 URI）
+      parameters:
+        - { in: query, name: u, required: true, schema: { type: string }, description: base64url(媒体地址) }
+        - { in: query, name: h, schema: { type: string }, description: base64url(JSON 请求头) }
+        - { in: query, name: token, schema: { type: string } }
+      responses:
+        '200':
+          description: 媒体数据或重写后的播放列表
+          content:
+            application/vnd.apple.mpegurl: {}
+            application/octet-stream: {}
+            video/mp2t: {}
+        '206':
+          description: Range 部分内容
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '502': { $ref: '#/components/responses/UpstreamError' }
+
+  /api/img:
+    get:
+      tags: [play]
+      summary: 图片代理（海报防盗链）
+      parameters:
+        - { in: query, name: u, required: true, schema: { type: string }, description: base64url(图片地址) }
+        - { in: query, name: r, schema: { type: string }, description: Referer }
+        - { in: query, name: token, schema: { type: string } }
+      responses:
+        '200':
+          description: 图片字节
+          content:
+            image/*: {}
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '502': { $ref: '#/components/responses/UpstreamError' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+    apiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+    queryToken:
+      type: apiKey
+      in: query
+      name: token
+
+  responses:
+    BadRequest:
+      description: 参数缺失或尚未加载配置
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unauthorized:
+      description: 鉴权失败
+      headers:
+        WWW-Authenticate:
+          schema: { type: string }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: 站点或影片不存在
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    SiteError:
+      description: 站点执行异常
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    UpstreamError:
+      description: 上游不可达或拉流失败
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+        hint: { type: string }
+        site: { type: string }
+
+    Health:
+      type: object
+      properties:
+        status: { type: string, example: ok }
+        version: { type: string, example: 1.0.0 }
+        auth: { type: boolean }
+        companion:
+          type: object
+          properties:
+            running: { type: boolean }
+        configLoaded: { type: boolean }
+        sites: { type: integer }
+
+    Status:
+      type: object
+      properties:
+        version: { type: string }
+        auth: { type: boolean }
+        companion:
+          type: object
+          nullable: true
+          properties:
+            running: { type: boolean }
+            port: { type: integer }
+            startedAt: { type: integer, format: int64 }
+            lastError: { type: string }
+        configLoaded: { type: boolean }
+        configUrl: { type: string, nullable: true }
+        sites: { type: integer }
+        loadedSites:
+          type: array
+          items:
+            type: object
+            properties:
+              key: { type: string }
+              ok: { type: boolean }
+              error: { type: string }
+              at: { type: integer, format: int64 }
+
+    Site:
+      type: object
+      properties:
+        key: { type: string }
+        name: { type: string }
+        type: { type: integer, enum: [0, 1, 3] }
+        api: { type: string }
+        usesCompanion: { type: boolean }
+        unsupported: { type: boolean }
+        searchable: { type: integer }
+        loaded: { type: boolean }
+
+    SiteRequest:
+      type: object
+      required: [key]
+      properties:
+        key: { type: string, description: 站点 key 或名称 }
+
+    ConfigResult:
+      type: object
+      properties:
+        kind: { type: string, enum: [config] }
+        configUrl: { type: string }
+        siteCount: { type: integer }
+        parseCount: { type: integer }
+        liveCount: { type: integer }
+        spider: { type: string }
+        sites:
+          type: array
+          items: { $ref: '#/components/schemas/Site' }
+
+    DepotResult:
+      type: object
+      properties:
+        kind: { type: string, enum: [depot] }
+        configUrl: { type: string }
+        entries:
+          type: array
+          items:
+            type: object
+            properties:
+              name: { type: string }
+              url: { type: string }
+
+    VodCategory:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+
+    VodItem:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        pic: { type: string }
+        remarks: { type: string }
+        typeName: { type: string }
+        year: { type: string }
+        area: { type: string }
+        score: { type: string }
+        tag: { type: string }
+
+    Page:
+      type: object
+      properties:
+        page: { type: integer }
+        pagecount: { type: integer }
+        total: { type: integer }
+        limit: { type: integer }
+        categories:
+          type: array
+          items: { $ref: '#/components/schemas/VodCategory' }
+        list:
+          type: array
+          items: { $ref: '#/components/schemas/VodItem' }
+
+    DetailItem:
+      allOf:
+        - $ref: '#/components/schemas/VodItem'
+        - type: object
+          properties:
+            actor: { type: string }
+            director: { type: string }
+            content: { type: string }
+
+    Episode:
+      type: object
+      properties:
+        name: { type: string }
+        url: { type: string, description: 选集标识，交给 /api/play 的 id }
+
+    Source:
+      type: object
+      properties:
+        name: { type: string }
+        episodes:
+          type: array
+          items: { $ref: '#/components/schemas/Episode' }
+
+    DetailResult:
+      type: object
+      properties:
+        item: { $ref: '#/components/schemas/DetailItem' }
+        sources:
+          type: array
+          items: { $ref: '#/components/schemas/Source' }
+        site:
+          type: object
+          properties:
+            key: { type: string }
+            name: { type: string }
+
+    PlayResult:
+      type: object
+      properties:
+        url: { type: string, description: 真实媒体地址 }
+        type:
+          type: string
+          enum: [hls, mp4, flv, ts, rtmp, rtsp, other]
+        headers:
+          type: object
+          additionalProperties: { type: string }
+        needsParse: { type: boolean }
+        stream: { type: string, description: 相对代理地址 }
+        streamUrl: { type: string, description: 绝对代理地址（推荐） }
+
+    ResolveRequest:
+      type: object
+      required: [site]
+      properties:
+        site: { type: string }
+        name: { type: string, description: 片名（与 id 二选一） }
+        id: { type: string, description: 影片 ID（与 name 二选一） }
+        pick: { type: integer, default: 0 }
+        source: { type: string }
+        sourceIndex: { type: integer }
+        episode: { type: string }
+        episodeUrl: { type: string }
+
+    ResolveResult:
+      type: object
+      properties:
+        site:
+          type: object
+          properties:
+            key: { type: string }
+            name: { type: string }
+            type: { type: integer }
+            api: { type: string }
+        item: { $ref: '#/components/schemas/DetailItem' }
+        source:
+          type: object
+          properties:
+            index: { type: integer }
+            name: { type: string }
+            episodeCount: { type: integer }
+        episode:
+          type: object
+          properties:
+            index: { type: integer }
+            name: { type: string }
+            url: { type: string }
+        url: { type: string }
+        type:
+          type: string
+          enum: [hls, mp4, flv, ts, rtmp, rtsp, other]
+        headers:
+          type: object
+          additionalProperties: { type: string }
+        needsParse: { type: boolean }
+        stream: { type: string }
+        streamUrl: { type: string }
+        alternatives:
+          type: array
+          items:
+            type: object
+            properties:
+              index: { type: integer }
+              name: { type: string }
+              episodeCount: { type: integer }
+        elapsedMs: { type: integer }

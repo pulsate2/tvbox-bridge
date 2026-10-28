@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TVBox Bridge · 饭太硬测试</title>
+  <link rel="stylesheet" href="/css/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">TV</span>
+      <div>
+        <h1>TVBox Bridge</h1>
+        <p>xiugou-tv 解析链路复刻 · 饭太硬源测试</p>
+      </div>
+    </div>
+    <div class="config-row">
+      <input id="configUrl" type="text" spellcheck="false"
+        value="https://raw.githubusercontent.com/qist/tvbox/master/fty.json"
+        placeholder="TVBox 配置地址 / 多仓地址" />
+      <input id="apiToken" class="token-input" type="password" spellcheck="false"
+        placeholder="API Token（服务端开启鉴权时填写）" autocomplete="off" />
+      <button id="loadConfig" class="primary">加载配置</button>
+    </div>
+  </header>
+
+  <div id="depotBar" class="depot-bar hidden">
+    <span>多仓清单：</span>
+    <select id="depotSelect"></select>
+    <button id="loadDepot" class="primary small">加载选中仓库</button>
+  </div>
+
+  <main class="layout">
+    <aside class="sidebar">
+      <div class="side-head">
+        <h2>站点</h2>
+        <button id="refreshSites" title="重新读取站点">↻</button>
+      </div>
+      <input id="siteFilter" class="site-filter" type="text" placeholder="筛选站点…" />
+      <div id="siteList" class="site-list">
+        <div class="hint">先加载配置</div>
+      </div>
+    </aside>
+
+    <section class="content">
+      <div class="content-head">
+        <div class="current">
+          <h2 id="siteTitle">未选择站点</h2>
+          <span id="siteMeta" class="muted"></span>
+        </div>
+        <div class="search-row">
+          <input id="searchInput" type="text" placeholder="在当前站点搜索片名…" />
+          <button id="searchBtn" class="primary small">搜索</button>
+        </div>
+      </div>
+
+      <div id="statusLine" class="status-line"></div>
+      <div id="categoryBar" class="category-bar"></div>
+      <div id="grid" class="grid">
+        <div class="empty">选择左侧站点后加载首页</div>
+      </div>
+      <div id="pager" class="pager hidden">
+        <button id="prevPage">上一页</button>
+        <span id="pageInfo"></span>
+        <button id="nextPage">下一页</button>
+      </div>
+    </section>
+  </main>
+
+  <section id="logPanel" class="log-panel collapsed">
+    <button id="logToggle" class="log-toggle">日志 / 调试 <span id="logCount"></span></button>
+    <pre id="logs"></pre>
+  </section>
+
+  <!-- 详情浮层 -->
+  <div id="detailOverlay" class="overlay hidden">
+    <div class="detail-card">
+      <button class="close" data-close="detail">×</button>
+      <div class="detail-top">
+        <img id="detailPic" alt="" />
+        <div class="detail-info">
+          <h2 id="detailName"></h2>
+          <div id="detailMeta" class="muted"></div>
+          <p id="detailContent"></p>
+        </div>
+      </div>
+      <div id="sourceTabs" class="source-tabs"></div>
+      <div id="episodes" class="episodes"></div>
+    </div>
+  </div>
+
+  <!-- 播放浮层 -->
+  <div id="playerOverlay" class="overlay hidden">
+    <div class="player-card">
+      <div class="player-head">
+        <h2 id="playerTitle">播放器</h2>
+        <div class="player-actions">
+          <a id="directLink" href="#" target="_blank" rel="noreferrer">直链</a>
+          <button class="close" data-close="player">×</button>
+        </div>
+      </div>
+      <video id="video" controls playsinline></video>
+      <div id="playerStatus" class="player-status"></div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="/vendor/hls.min.js"></script>
+  <script src="/js/app.js"></script>
+</body>
+</html>

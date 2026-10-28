@@ -1,0 +1,14 @@
+{
+  "name": "tvbox-bridge",
+  "version": "1.0.0",
+  "private": true,
+  "description": "TVBox 配置/Spider 解析链路的简易 Web 复刻（对齐 xiugou-tv），用于验证饭太硬等源",
+  "scripts": {
+    "start": "node server.js",
+    "build:companion": "bash companion-build/build.sh",
+    "test:fty": "node scripts/test-fty.js"
+  },
+  "dependencies": {
+    "undici": "^6.29.1"
+  }
+}

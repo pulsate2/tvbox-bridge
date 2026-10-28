@@ -1,0 +1,177 @@
+name: docker
+
+on:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      push:
+        description: '构建后推送镜像到 GHCR'
+        type: boolean
+        default: true
+
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # ------------------------------------------------------------------
+  # 1) 从 xiugou-tv 源码编译 companion-service.jar（CatVod 运行时）
+  # ------------------------------------------------------------------
+  companion:
+    name: build companion jar
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout tvbox-bridge
+        uses: actions/checkout@v4
+        with:
+          path: tvbox-bridge
+
+      - name: Checkout xiugou-tv
+        uses: actions/checkout@v4
+        with:
+          # 可用仓库变量 COMPANION_REPO 覆盖（例如自己的 fork）
+          repository: ${{ vars.COMPANION_REPO || 'qfw66/xiugou-tv' }}
+          path: xiugou-tv
+          fetch-depth: 1
+          token: ${{ secrets.COMPANION_REPO_TOKEN || github.token }}
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Build companion-service.jar
+        working-directory: tvbox-bridge
+        run: bash companion-build/build.sh
+
+      - name: Upload companion dist
+        uses: actions/upload-artifact@v4
+        with:
+          name: companion-dist
+          path: tvbox-bridge/companion/dist
+          retention-days: 3
+          if-no-files-found: error
+
+  # ------------------------------------------------------------------
+  # 2) 构建镜像 → 冒烟测试 → 推送
+  # ------------------------------------------------------------------
+  docker:
+    name: build & push image
+    needs: companion
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download companion dist
+        uses: actions/download-artifact@v4
+        with:
+          name: companion-dist
+          path: companion/dist
+
+      - name: Show build inputs
+        run: |
+          node --check server.js
+          ls -lh companion/dist
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=sha-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      # 先构建到本地（不推送），跑冒烟测试，通过后再推
+      - name: Build (load locally)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: tvbox-bridge:smoke
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test
+        run: |
+          set -euo pipefail
+          docker run -d --name smoke -p 18787:8787 \
+            -e BRIDGE_TOKEN=test-token \
+            tvbox-bridge:smoke
+
+          cleanup() { docker rm -f smoke >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+
+          ok=0
+          for i in $(seq 1 40); do
+            if curl -fsS --max-time 3 http://127.0.0.1:18787/api/health >/tmp/health.json 2>/dev/null; then ok=1; break; fi
+            sleep 2
+          done
+          if [ "$ok" != "1" ]; then
+            echo "::error::容器未在 80s 内就绪"
+            docker logs smoke || true
+            exit 1
+          fi
+          echo "health: $(cat /tmp/health.json)"
+
+          # 无 token → 401
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18787/api/sites)
+          echo "no-token /api/sites => $code"
+          [ "$code" = "401" ] || { docker logs smoke; exit 1; }
+
+          # 带 token → 400（尚未加载配置，说明已通过鉴权）
+          code=$(curl -s -o /dev/null -w '%{http_code}' \
+            -H 'Authorization: Bearer test-token' http://127.0.0.1:18787/api/sites)
+          echo "with-token /api/sites => $code"
+          [ "$code" = "400" ] || { docker logs smoke; exit 1; }
+
+          # 查询参数鉴权同样可用
+          code=$(curl -s -o /dev/null -w '%{http_code}' \
+            'http://127.0.0.1:18787/api/sites?token=test-token')
+          echo "query-token /api/sites => $code"
+          [ "$code" = "400" ] || { docker logs smoke; exit 1; }
+
+      - name: Push image
+        if: >
+          github.event_name == 'push' ||
+          (github.event_name == 'workflow_dispatch' && inputs.push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          provenance: false

@@ -1,0 +1,26 @@
+services:
+  tvbox-bridge:
+    image: ghcr.io/OWNER/tvbox-bridge:latest
+    # 本地构建：docker compose build
+    build:
+      context: .
+    container_name: tvbox-bridge
+    ports:
+      - "8787:8787"
+    environment:
+      # 必改：接口鉴权 token（逗号分隔可配置多个）
+      BRIDGE_TOKEN: "change-me-please"
+      # 反向代理/公网访问时用于生成绝对地址（可选）
+      # PUBLIC_BASE_URL: "https://bridge.example.com"
+      # 容器内访问宿主机代理（GitHub / 墙外配置需要）
+      # HTTPS_PROXY: "http://host.docker.internal:10808"
+      # HTTP_PROXY: "http://host.docker.internal:10808"
+    volumes:
+      # 持久化载荷缓存（首次解密约 10s + dex2jar 约 20s，缓存后秒级）
+      - bridge-data:/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+volumes:
+  bridge-data:

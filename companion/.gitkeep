@@ -1,0 +1,2 @@
+# 占位文件：保证全新 clone 后 companion/ 目录存在，Dockerfile 的 COPY companion/ 不会失败。
+# 运行 companion-build/build.sh 后会生成 dist/ 与 jars/（均被 .gitignore 忽略）。

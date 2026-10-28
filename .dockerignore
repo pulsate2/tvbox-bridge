@@ -1,0 +1,12 @@
+.git
+.github
+.gitignore
+node_modules
+.tmp
+docs
+scripts
+companion-build
+companion/jars
+**/*.log
+README.md
+docker-compose.yml
