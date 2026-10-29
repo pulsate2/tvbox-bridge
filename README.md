@@ -74,7 +74,7 @@ CMS 请求带多级兜底（无参数 → `ac=videolist` → `ac=detail` → 纯
 server.js                     Node 后端：配置解码、CMS/Spider 调度、媒体代理、HLS 重写、鉴权
 public/                       前端：站点列表、分类、海报墙、详情、选集、hls.js 播放器
 companion-build/build.sh      从 xiugou-tv 源码构建 companion-service.jar（JDK 17+）
-companion-build/overlay/      两个必要 shim 补丁（见下）
+companion-build/overlay/      上游缺失的 shim（见下）
 scripts/test-fty.js           饭太硬源可用性自动测试
 docs/API.md                   第三方接口文档
 docs/openapi.yaml             OpenAPI 3.0 规范
@@ -85,9 +85,9 @@ Dockerfile / docker-compose.yml
 要点：
 
 1. **原样复用 Java 解析层**：直接编译 `xiugou-tv/android-bridge` + `xiugou-tv/companion/src`，打包成自包含 jar，运行时 `java -jar companion-service.jar --port=0`，由 Node 解析握手行并调用 RPC。
-2. **补齐两个 Android shim**（原仓库缺少，饭太硬载荷会因此失败）：
-   - `android.graphics.drawable.Drawable$ConstantState`：`ProxyOrigin` 在 `playerContent` 路径调用 `getConstantState().newDrawable()`，缺失会抛 `NoClassDefFoundError`，表现为「站点暂不可用 (stage=call)」。
-   - `android.widget.ListAdapter`：`Pan` 初始化时引用。
+2. **补齐上游缺失的 Android shim**（按需补，不整类替换 —— 上游会持续演进，整类替换会让子类的 `@Override` 失效）：
+   - `android.graphics.drawable.Drawable$ConstantState`：`ProxyOrigin` 在 `playerContent` 路径调用 `getConstantState().newDrawable()`，老版本上游缺失会抛 `NoClassDefFoundError`（表现为「站点暂不可用 (stage=call)」）。构建脚本检测后按需注入成员，新版本上游已自带则跳过。
+   - `android.widget.ListAdapter`：`Pan` 初始化时引用，上游仍缺失，由 overlay 提供。
 3. **直接解包本地代理 URL**：spider 返回的 `127.0.0.1:9978/proxy?do=m3u8&url=...` 或 `/proxy/<base64url>` 在 Web 端没有对应服务，后端会取出内层真实地址。
 4. **媒体代理**：`/api/stream` 负责透传 UA/Referer/Origin、Range；遇到 m3u8 会重写每个分片、子清单、`EXT-X-KEY` / `EXT-X-MAP` 的 URI，使 hls.js 能通过本地代理加载（含 AES-128 密钥）。
 5. **图片代理**：`/api/img` 解决海报防盗链。

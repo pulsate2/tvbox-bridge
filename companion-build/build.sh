@@ -48,20 +48,65 @@ CP="$( { ls "$LIB_DIR"/*.jar "$UNIDBG_DIR"/*.jar 2>/dev/null | while read -r f; 
 echo "[build] javac $(javac -version 2>&1)"
 echo "[build] 源码: $XIUGOU"
 
-# 先把源码复制到构建目录再编译：需要在副本上做两处改写
-#   1) 数据目录名 → .tvbox_bridge
-#   2) 用 overlay 版 Drawable 替换上游版本（补 ConstantState）
+# 先把源码复制到构建目录，再在副本上做改写。
+# 注意：**不要整类替换上游文件**。上游会持续演进（例如 Drawable 后来自己补了
+# getConstantState 和 getBounds），整类替换会让子类的 @Override 全部失效，
+# CI 上就因此编译失败过。这里只「缺什么补什么」。
 (
   cd "$XIUGOU"
-  find android-bridge/src companion/src -name '*.java' \
-    ! -path 'android-bridge/src/android/graphics/drawable/Drawable.java' \
-    | while read -r f; do
+  find android-bridge/src companion/src -name '*.java' -print0 \
+    | while IFS= read -r -d '' f; do
         mkdir -p "$SRC/$(dirname "$f")"
         cp "$f" "$SRC/$f"
       done
 )
-mkdir -p "$SRC/overlay"
-cp -r "$ROOT/companion-build/overlay/." "$SRC/overlay/"
+
+# 补丁 1：android.widget.ListAdapter —— 饭太硬载荷的 Pan 初始化时引用，上游没有。
+LIST_ADAPTER="$SRC/android-bridge/src/android/widget/ListAdapter.java"
+if [ ! -f "$LIST_ADAPTER" ]; then
+  mkdir -p "$(dirname "$LIST_ADAPTER")"
+  cp "$ROOT/companion-build/overlay/android/widget/ListAdapter.java" "$LIST_ADAPTER"
+  echo "[build] 补丁: android.widget.ListAdapter（上游缺失）"
+else
+  echo "[build] 上游已提供 ListAdapter，跳过补丁"
+fi
+
+# 补丁 2：Drawable.getConstantState() / Drawable$ConstantState —— 载荷的 ProxyOrigin
+# 在 playerContent 路径上会调用 getConstantState().newDrawable()。上游新版本已自带，
+# 老版本没有；这里检测后按需注入（只追加成员，不动既有实现）。
+DRAWABLE="$SRC/android-bridge/src/android/graphics/drawable/Drawable.java"
+if [ ! -f "$DRAWABLE" ]; then
+  echo "[build] WARN: 未找到 $DRAWABLE，跳过 ConstantState 补丁"
+elif grep -q 'getConstantState' "$DRAWABLE"; then
+  echo "[build] 上游已提供 Drawable.getConstantState，跳过补丁"
+else
+  echo "[build] 补丁: Drawable.getConstantState（上游缺失）"
+  awk '
+    { line[NR] = $0 }
+    END {
+      last = 0
+      for (i = NR; i >= 1; i--) if (line[i] ~ /^[[:space:]]*}[[:space:]]*$/) { last = i; break }
+      if (last == 0) { for (i = 1; i <= NR; i++) print line[i]; exit }
+      for (i = 1; i <= NR; i++) {
+        if (i == last) {
+          print "    public ConstantState getConstantState() {"
+          print "        final Drawable self = this;"
+          print "        return new ConstantState() {"
+          print "            @Override public Drawable newDrawable() { return self; }"
+          print "        };"
+          print "    }"
+          print ""
+          print "    public abstract static class ConstantState {"
+          print "        public abstract Drawable newDrawable();"
+          print "        public int getChangingConfigurations() { return 0; }"
+          print "    }"
+        }
+        print line[i]
+      }
+    }
+  ' "$DRAWABLE" > "$DRAWABLE.tmp" && mv "$DRAWABLE.tmp" "$DRAWABLE"
+  grep -q 'class ConstantState' "$DRAWABLE" || { echo "[build] ERROR: ConstantState 注入失败" >&2; exit 1; }
+fi
 
 UPSTREAM_DATA_DIR="$(grep -rhoE '"\.[A-Za-z0-9_]*_tv_companion"' "$SRC" 2>/dev/null | head -1 | tr -d '"' || true)"
 if [ -n "$UPSTREAM_DATA_DIR" ] && [ "$UPSTREAM_DATA_DIR" != "$DATA_DIR_NAME" ]; then
