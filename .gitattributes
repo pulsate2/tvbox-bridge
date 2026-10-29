@@ -1,0 +1,4 @@
+# 跨平台构建脚本必须保持 LF，否则 Linux CI 上 bash 会报 `\r': command not found`
+*.sh   text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf

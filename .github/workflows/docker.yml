@@ -54,6 +54,9 @@ jobs:
 
       - name: Build companion-service.jar
         working-directory: tvbox-bridge
+        env:
+          # 显式指定源码位置，避免依赖 checkout 的相对目录布局
+          COMPANION_SRC_DIR: ${{ github.workspace }}/xiugou-tv
         run: bash companion-build/build.sh
 
       - name: Upload companion dist

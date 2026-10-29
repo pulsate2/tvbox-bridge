@@ -23,11 +23,14 @@ SRC="$BUILD/src"
 DATA_DIR_NAME=".tvbox_bridge"
 
 # Windows(MSYS/Git Bash) 下 javac/jar 只认反斜杠路径，且 classpath 分隔符是 ';'。
+# to_path 统一输出「一行一个路径」（末尾带换行）：
+#   - 拼 @argfile 时必须一行一个，否则所有源码路径会连成一行（CI 上就踩过这个坑）；
+#   - 用在 "$(to_path ...)" 里时，命令替换会自动去掉尾部换行，不影响单路径场景。
 if command -v cygpath >/dev/null 2>&1; then
   to_path() { cygpath -w "$1"; }
   PATHSEP=';'
 else
-  to_path() { printf '%s' "$1"; }
+  to_path() { printf '%s\n' "$1"; }
   PATHSEP=':'
 fi
 
@@ -70,7 +73,19 @@ else
   echo "[build] WARN: 未在源码中探测到上游数据目录字面量，跳过改名"
 fi
 
-find "$SRC" -name '*.java' | while read -r f; do to_path "$f"; done > "$BUILD/sources.txt"
+# @argfile 必须「一行一个路径」。这里额外校验一遍：路径被连成一行时 javac 只会报
+# "file not found: <超长拼接串>"，在 CI 日志里几乎无法定位。
+# 判据：行数不能少得离谱（本仓库当前 121 个），且每行都必须以 .java 结尾。
+: > "$BUILD/sources.txt"
+find "$SRC" -name '*.java' -print0 | while IFS= read -r -d '' f; do to_path "$f" >> "$BUILD/sources.txt"; done
+SOURCE_COUNT="$(wc -l < "$BUILD/sources.txt" | tr -d ' ')"
+BAD_LINES="$(grep -cv '\.java$' "$BUILD/sources.txt" || true)"
+if [ "$SOURCE_COUNT" -lt 50 ] || [ "$BAD_LINES" -ne 0 ]; then
+  echo "[build] ERROR: 源码清单异常（$SOURCE_COUNT 行，$BAD_LINES 行不是以 .java 结尾）" >&2
+  echo "[build]        前 3 行：$(head -3 "$BUILD/sources.txt" | cut -c1-200)" >&2
+  exit 1
+fi
+echo "[build] 源码文件: $SOURCE_COUNT"
 javac -encoding UTF-8 -cp "$CP" -d "$(to_path "$CLASSES")" @"$(to_path "$BUILD/sources.txt")"
 
 # 合并依赖到 classes（保持单 jar 自包含）；android-json 必须压过 json-20231013 的 org.json
