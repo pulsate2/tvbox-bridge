@@ -1,16 +1,17 @@
 #!/usr/bin/env bash
-# 从 xiugou-tv 源码构建 companion-service.jar（复刻其 companion/build.ps1 的关键步骤）。
+# 从 Java 解析层源码构建 companion-service.jar（CatVod spider 运行时）。
 # 产物：companion/dist/companion-service.jar + bcprov + lib-unidbg/
 #
 # 需要：bash、JDK 17+（javac / jar / java）。
-# 源码目录可用 COMPANION_SRC_DIR 覆盖（默认 ../xiugou-tv）。
+# 源码目录由 COMPANION_SRC_DIR 指定，默认 ../companion-src。
+# 源码树需包含 android-bridge/src 与 companion/src 两个模块。
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-XIUGOU="$(cd "${COMPANION_SRC_DIR:-$ROOT/../xiugou-tv}" && pwd)"
-LIB_DIR="$XIUGOU/companion/lib"
-LIBS_DIR="$XIUGOU/companion/libs"
-UNIDBG_DIR="$XIUGOU/companion/lib-unidbg"
+COMPANION_SRC="$(cd "${COMPANION_SRC_DIR:-$ROOT/../companion-src}" && pwd)"
+LIB_DIR="$COMPANION_SRC/companion/lib"
+LIBS_DIR="$COMPANION_SRC/companion/libs"
+UNIDBG_DIR="$COMPANION_SRC/companion/lib-unidbg"
 
 BUILD="$ROOT/companion-build/build"
 DIST="$ROOT/companion/dist"
@@ -34,9 +35,10 @@ else
   PATHSEP=':'
 fi
 
-if [ ! -d "$XIUGOU/companion" ]; then
-  echo "[build] ERROR: 找不到 xiugou-tv 源码: $XIUGOU" >&2
-  echo "[build]        可用 COMPANION_SRC_DIR=/path/to/xiugou-tv 指定" >&2
+if [ ! -d "$COMPANION_SRC/companion" ] || [ ! -d "$COMPANION_SRC/android-bridge" ]; then
+  echo "[build] ERROR: 解析层源码目录无效: $COMPANION_SRC" >&2
+  echo "[build]        需要包含 android-bridge/src 与 companion/src 两个模块" >&2
+  echo "[build]        用 COMPANION_SRC_DIR=/path/to/source 指定" >&2
   exit 1
 fi
 
@@ -46,14 +48,14 @@ mkdir -p "$CLASSES" "$DIST" "$SRC"
 CP="$( { ls "$LIB_DIR"/*.jar "$UNIDBG_DIR"/*.jar 2>/dev/null | while read -r f; do to_path "$f"; done; } | tr '\n' "$PATHSEP")"
 
 echo "[build] javac $(javac -version 2>&1)"
-echo "[build] 源码: $XIUGOU"
+echo "[build] 源码: $COMPANION_SRC"
 
 # 先把源码复制到构建目录，再在副本上做改写。
 # 注意：**不要整类替换上游文件**。上游会持续演进（例如 Drawable 后来自己补了
 # getConstantState 和 getBounds），整类替换会让子类的 @Override 全部失效，
 # CI 上就因此编译失败过。这里只「缺什么补什么」。
 (
-  cd "$XIUGOU"
+  cd "$COMPANION_SRC"
   find android-bridge/src companion/src -name '*.java' -print0 \
     | while IFS= read -r -d '' f; do
         mkdir -p "$SRC/$(dirname "$f")"
@@ -108,14 +110,48 @@ else
   grep -q 'class ConstantState' "$DRAWABLE" || { echo "[build] ERROR: ConstantState 注入失败" >&2; exit 1; }
 fi
 
-UPSTREAM_DATA_DIR="$(grep -rhoE '"\.[A-Za-z0-9_]*_tv_companion"' "$SRC" 2>/dev/null | head -1 | tr -d '"' || true)"
-if [ -n "$UPSTREAM_DATA_DIR" ] && [ "$UPSTREAM_DATA_DIR" != "$DATA_DIR_NAME" ]; then
-  echo "[build] 改写数据目录: $UPSTREAM_DATA_DIR -> $DATA_DIR_NAME"
-  grep -rl "$UPSTREAM_DATA_DIR" "$SRC" 2>/dev/null | while read -r f; do
-    sed -i "s/$UPSTREAM_DATA_DIR/$DATA_DIR_NAME/g" "$f"
-  done
+# ----------------------------------------------------------------------
+# 品牌串改写：上游把项目名写死进了数据目录、缓存目录、系统属性与调试开关，
+# 这些字符串会随 class 一起打进 jar（镜像里可见）。这里统一换成 tvbox_bridge。
+#
+# 品牌名不硬编码：从「数据目录字面量」反推（`".<brand>_tv_companion"`），
+# 因此上游改名也能自动跟上，本仓库里也不会出现上游品牌字样。
+# ----------------------------------------------------------------------
+UPSTREAM_DATA_DIR="$(grep -rhoE '"\.[A-Za-z0-9_]+_tv_companion"' "$SRC" 2>/dev/null | head -1 | tr -d '"' || true)"
+BRAND=""
+if [ -n "$UPSTREAM_DATA_DIR" ]; then
+  BRAND="${UPSTREAM_DATA_DIR#.}"
+  BRAND="${BRAND%_tv_companion}"
+fi
+
+if [ -n "$BRAND" ]; then
+  BRAND_UPPER="$(printf '%s' "$BRAND" | tr '[:lower:]' '[:upper:]')"
+  BRAND_CAP="$(printf '%s' "$BRAND" | awk '{ print toupper(substr($0,1,1)) substr($0,2) }')"
+  echo "[build] 品牌串改写: $BRAND -> tvbox_bridge"
+
+  # 逐条替换（顺序敏感：先处理带下划线/连字符的长串，再处理点号命名空间）
+  rewrite() {
+    local pattern="$1" replacement="$2"
+    grep -rl -- "$pattern" "$SRC" 2>/dev/null | while IFS= read -r f; do
+      sed -i "s|$pattern|$replacement|g" "$f"
+    done
+  }
+  rewrite "\.${BRAND}_tv_companion" ".${DATA_DIR_NAME}"
+  rewrite "${BRAND}_tv_\([a-z]*\)" "tvbox_bridge_\1"
+  rewrite "${BRAND}-tv" "tvbox-bridge"
+  rewrite "${BRAND_CAP}" "TvboxBridge"
+  rewrite "${BRAND_UPPER}_DEBUG" "TVBOX_BRIDGE_DEBUG"
+  rewrite "${BRAND}\." "tvbox.bridge."
+
+  # 兜底校验：任何残留都会被打进镜像，直接失败而不是静默放过
+  LEFTOVER="$(grep -rIoi "$BRAND" "$SRC" 2>/dev/null | head -5 || true)"
+  if [ -n "$LEFTOVER" ]; then
+    echo "[build] ERROR: 仍有未改写的品牌串，请补充 build.sh 的 rewrite 规则：" >&2
+    grep -rIn -i "$BRAND" "$SRC" 2>/dev/null | head -10 >&2
+    exit 1
+  fi
 else
-  echo "[build] WARN: 未在源码中探测到上游数据目录字面量，跳过改名"
+  echo "[build] WARN: 未探测到上游数据目录字面量，跳过品牌串改写"
 fi
 
 # @argfile 必须「一行一个路径」。这里额外校验一遍：路径被连成一行时 javac 只会报

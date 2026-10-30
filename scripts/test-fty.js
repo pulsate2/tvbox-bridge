@@ -2,7 +2,7 @@
 /**
  * 饭太硬源可用性测试（需先启动 server.js）
  *
- * 测试链路与 xiugou-tv 一致：
+ * 测试链路：
  *   配置 → Spider 加载 → homeContent → detailContent → playerContent → 媒体可拉取
  *
  * 用法：

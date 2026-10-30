@@ -2,28 +2,28 @@
 
 TVBox / CatVod 解析链路的简易 Web 复刻，用于验证 **饭太硬** 等影视配置是否可用。
 
-后端复用了 [xiugou-tv](../xiugou-tv) 的 Java 解析层（CatVod spider 契约 + Android 运行时 shim + 加固载荷解密 + dex2jar），前端是一个纯浏览器页面，支持分类浏览、搜索、详情、选集与 HLS/mp4 播放。
+后端复用一套 Java 解析层（CatVod spider 契约 + Android 运行时 shim + 加固载荷解密 + dex2jar），前端是一个纯浏览器页面，支持分类浏览、搜索、详情、选集与 HLS/mp4 播放。
 
 > 仅供本机技术验证。软件不提供内容源，播放内容来自你自行添加的配置。服务只监听 `127.0.0.1`。
 
 ---
 
-## 1. xiugou-tv 的实现方式（分析）
+## 1. 解析层的实现方式（CatVod / TVBox 生态）
 
 ### 1.1 分层
 
 ```
-Flutter UI
-  └─ SiteApi（统一站点调度）
-       ├─ CmsJsonApi      type 0/1：直连 CMS（XML / JSON）
-       └─ CompanionSpiderApi
+客户端（本项目的 Web 前端）
+  └─ 统一站点调度
+       ├─ CMS 直连      type 0/1：HTTP 拉取 XML / JSON
+       └─ Spider 适配
             └─ 本地 Java 伴随进程（companion-service.jar）
                  └─ SpiderServer（HTTP RPC）
                       └─ DexSpiderLoader（jar/加固载荷/dex2jar/ClassLoader）
                            └─ CatVod Spider 实现（csp_* / .js）
 ```
 
-### 1.2 配置加载（`lib/core/config/`）
+### 1.2 配置加载
 
 - `ConfigRepository` 支持远程 URL、本地文件、粘贴文本；多仓 `{"urls":[{"name","url"}]}` 递归解析（最多 8 层）。
 - `ConfigDecoder` 依次尝试：`<pre>` 内嵌 → 严格 JSON → `XXXXXXXX**<Base64>` 标记 → 宽松 JSON（注释、无引号键、尾逗号）→ 整体 Base64。
@@ -43,7 +43,7 @@ CMS 请求带多级兜底（无参数 → `ac=videolist` → `ac=detail` → 纯
 
 ### 1.4 Java 伴随进程（`companion/` + `android-bridge/`）
 
-- `Main` 启动 `AndroidBridge.serve(0)`，打印 `[COMPANION_READY] PORT=<n>` 供 Flutter 解析；`--stdin-watch` / `--parent-pid` 防止孤儿进程。
+- `Main` 启动 `AndroidBridge.serve(0)`，打印 `[COMPANION_READY] PORT=<n>` 供上层解析；`--stdin-watch` / `--parent-pid` 防止孤儿进程。
 - `SpiderServer` 暴露：
   - `POST /spider/load`：`{key, api, ext, jar}` → 实例化并 `init`
   - `POST /spider/call`：`{siteKey, api, ext, jar, method, ...}`，method 为 `homeContent / homeVideoContent / categoryContent / detailContent / searchContent / playerContent / liveContent`
@@ -57,7 +57,7 @@ CMS 请求带多级兜底（无参数 → `ac=videolist` → `ac=detail` → 纯
   - `GuardProxyServer` 起本地代理，并把载荷返回的 `127.0.0.1:9978/proxy?...` 改写成 `/proxy/<base64url>`；
   - `FyGuard` 等会让 JVM 段错误的载荷被 `BLOCKED_API` 拒绝，避免拖死整个进程。
 
-### 1.5 播放解析（`SiteApi.resolvePlayback` / `ParseEngine`）
+### 1.5 播放解析
 
 - Spider：`playerContent(flag, id)` 返回 `{url, parse, jx, header, playUrl}`。
   - `parse==0 && jx==0`：`url` 即媒体地址；
@@ -73,7 +73,7 @@ CMS 请求带多级兜底（无参数 → `ac=videolist` → `ac=detail` → 纯
 ```
 server.js                     Node 后端：配置解码、CMS/Spider 调度、媒体代理、HLS 重写、鉴权
 public/                       前端：站点列表、分类、海报墙、详情、选集、hls.js 播放器
-companion-build/build.sh      从 xiugou-tv 源码构建 companion-service.jar（JDK 17+）
+companion-build/build.sh      从 Java 解析层源码构建 companion-service.jar（JDK 17+）
 companion-build/overlay/      上游缺失的 shim（见下）
 scripts/test-fty.js           饭太硬源可用性自动测试
 docs/API.md                   第三方接口文档
@@ -84,7 +84,7 @@ Dockerfile / docker-compose.yml
 
 要点：
 
-1. **原样复用 Java 解析层**：直接编译 `xiugou-tv/android-bridge` + `xiugou-tv/companion/src`，打包成自包含 jar，运行时 `java -jar companion-service.jar --port=0`，由 Node 解析握手行并调用 RPC。
+1. **原样复用 Java 解析层**：直接编译源码树里的 `android-bridge/src` + `companion/src`，打包成自包含 jar，运行时 `java -jar companion-service.jar --port=0`，由 Node 解析握手行并调用 RPC。
 2. **补齐上游缺失的 Android shim**（按需补，不整类替换 —— 上游会持续演进，整类替换会让子类的 `@Override` 失效）：
    - `android.graphics.drawable.Drawable$ConstantState`：`ProxyOrigin` 在 `playerContent` 路径调用 `getConstantState().newDrawable()`，老版本上游缺失会抛 `NoClassDefFoundError`（表现为「站点暂不可用 (stage=call)」）。构建脚本检测后按需注入成员，新版本上游已自带则跳过。
    - `android.widget.ListAdapter`：`Pan` 初始化时引用，上游仍缺失，由 overlay 提供。
@@ -92,7 +92,7 @@ Dockerfile / docker-compose.yml
 4. **媒体代理**：`/api/stream` 负责透传 UA/Referer/Origin、Range；遇到 m3u8 会重写每个分片、子清单、`EXT-X-KEY` / `EXT-X-MAP` 的 URI，使 hls.js 能通过本地代理加载（含 AES-128 密钥）。
 5. **图片代理**：`/api/img` 解决海报防盗链。
 6. **代理策略**：配置/载荷（GitHub）走 `HTTPS_PROXY` 优先；媒体/CMS/解析走直连优先，失败再走代理；避免国内站点被代理 TLS 拒绝（如 `mv.gzlcl.com`）。
-7. **JDK 17 可运行**：xiugou-tv 发布基线是 JDK 21，但依赖字节码是 61（Java 17），仅有的 Java 21 `module-info.class` 在打包时删除后即可用 17 运行。
+7. **JDK 17 可运行**：上游发布基线是 JDK 21，但依赖字节码是 61（Java 17），仅有的 Java 21 `module-info.class` 在打包时删除后即可用 17 运行。
 8. **数据目录改名**：构建时把上游写死的运行时目录名替换为 `.tvbox_bridge`（载荷缓存 / prefs / sdcard），镜像与用户目录里不会出现上游品牌目录。
 9. **一步解析 + 鉴权**：`/api/resolve` 输入片名直接返回可播放地址；`BRIDGE_TOKEN(S)` 开启后所有接口需 token，代理出的 `stream` 自动带上调用方 token。
 
@@ -178,7 +178,7 @@ node scripts/test-fty.js --sites 荐片,光影,厂长
 
 `.github/workflows/docker.yml`：
 
-1. `companion` job：checkout 本仓库 + `xiugou-tv`（可用仓库变量 `COMPANION_REPO` 指向自己的 fork，`COMPANION_REPO_TOKEN` 提供私有仓库权限）→ JDK 17 → `companion-build/build.sh` → 上传 `companion/dist` 产物。
+1. `companion` job：checkout 本仓库 + 解析层源码（仓库变量 `COMPANION_REPO` 指定，`COMPANION_REPO_TOKEN` 提供私有仓库权限）→ JDK 17 → `companion-build/build.sh` → 上传 `companion/dist` 产物。未设置 `COMPANION_REPO` 时该 job 会明确报错并停止。
 2. `docker` job：下载产物 → Buildx 构建（`linux/amd64`）→ **冒烟测试**（起容器、等 `/api/health`、校验无 token 401 / 带 token 200 级通过鉴权 / 查询参数鉴权）→ 推送 `ghcr.io/<owner>/<repo>`。
 
 推送标签：分支名、`sha-<hash>`、`v1.2.3` 与 `v1.2`（tag 触发）、默认分支的 `latest`。PR 只构建不推送。
@@ -214,7 +214,7 @@ node scripts/test-fty.js --sites 荐片,光影,厂长
 | 热播 | ✅ | ❌ | m3u8 正常，但分片是 kwimgs 的占位 `.png`，返回 `NoSuchKey 404` |
 | 立播 | ✅ | ❌ | m3u8 被 Cloudflare 403 / 超时（与出口 IP 有关） |
 | 海绵 | ✅ | ❌ | `playerContent` 不返回 url |
-| 风云 | — | — | xiugou-tv 主动屏蔽（`FyGuard` 会让 JVM 段错误） |
+| 风云 | — | — | 解析层主动屏蔽（`FyGuard` 会让 JVM 段错误） |
 
 本次自动测试（7 个视频站）结果：**3/7 可完整播放**（光影、荐片、厂长）。其余失败原因均为上游源/防盗链/风控，而非解析链路本身。
 
@@ -232,6 +232,5 @@ node scripts/test-fty.js --sites 荐片,光影,厂长
 
 ## 5. 参考
 
-- xiugou-tv：`../xiugou-tv`（GPL-3.0）
 - 上游产品形态：FongMi/TV、TVBox、CatVod
 - 配置镜像：qist/tvbox（饭太硬衍生配置）

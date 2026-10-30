@@ -2,10 +2,10 @@
 /**
  * tvbox-bridge — 简易 TVBox Web 桥
  *
- * 复刻 xiugou-tv 的解析路径：
+ * 解析路径（TVBox / CatVod 生态）：
  *   1) 拉取 TVBox 配置（支持 JSON / Base64 / <pre> / 多仓 urls）
  *   2) CMS(type 0/1) 站点直接 HTTP 拉取；Spider(type 3 / csp_ / .js) 站点交给
- *      从 xiugou-tv 源码构建的 companion-service.jar（本地 CatVod 运行时）
+ *      由 companion-build 从 Java 解析层源码构建的 companion-service.jar（本地 CatVod 运行时）
  *   3) 浏览器端展示分类/列表/详情/搜索，并把播放地址经 /api/stream 代理播放
  *
  * 默认只监听 127.0.0.1；容器内用 HOST=0.0.0.0 暴露端口。
@@ -226,7 +226,7 @@ function firstString(...vals) {
 }
 
 /* ------------------------------------------------------------------ */
-/* 配置解码（对齐 xiugou-tv ConfigDecoder / 多仓）                        */
+/* 配置解码（JSON / Base64 / <pre> / 多仓）                              */
 /* ------------------------------------------------------------------ */
 
 const PRE_RE = /<pre[^>]*>([\s\S]*?)<\/pre>/i;
@@ -747,7 +747,7 @@ function isDirectMedia(url) {
 
 /**
  * 加固载荷会把真实播放地址包成 `http://127.0.0.1:9978/proxy?do=m3u8&url=...`
- * 或 `/proxy/<base64url>`（xiugou-tv 的 GuardProxyServer 本应改写）。
+ * 或 `/proxy/<base64url>`（本应由载荷侧的 GuardProxyServer 改写）。
  * Web 端没有该本地服务，这里直接把内层 url 取出来。
  */
 function unwrapLocalProxy(raw) {

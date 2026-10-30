@@ -2,7 +2,7 @@
   "name": "tvbox-bridge",
   "version": "1.0.0",
   "private": true,
-  "description": "TVBox 配置/Spider 解析链路的简易 Web 复刻（对齐 xiugou-tv），用于验证饭太硬等源",
+  "description": "TVBox / CatVod 配置与 Spider 解析链路的 Web 桥接服务",
   "scripts": {
     "start": "node server.js",
     "build:companion": "bash companion-build/build.sh",
