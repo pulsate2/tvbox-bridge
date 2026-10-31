@@ -3,4 +3,7 @@ node_modules/
 companion/dist/
 companion/jars/
 companion-build/build/
+companion-src/companion/lib/
+companion-src/companion/lib-unidbg/
+companion-src/companion/libs/
 *.log

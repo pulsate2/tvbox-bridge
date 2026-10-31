@@ -2,13 +2,13 @@
 # 从 Java 解析层源码构建 companion-service.jar（CatVod spider 运行时）。
 # 产物：companion/dist/companion-service.jar + bcprov + lib-unidbg/
 #
-# 需要：bash、JDK 17+（javac / jar / java）。
-# 源码目录由 COMPANION_SRC_DIR 指定，默认 ../companion-src。
+# 需要：bash、Node.js 18+、curl、JDK 17+（javac / jar / java）。
+# 默认使用本仓库 companion-src；COMPANION_SRC_DIR 可选，用于其他本地源码树。
 # 源码树需包含 android-bridge/src 与 companion/src 两个模块。
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-COMPANION_SRC="$(cd "${COMPANION_SRC_DIR:-$ROOT/../companion-src}" && pwd)"
+COMPANION_SRC="$(cd "${COMPANION_SRC_DIR:-$ROOT/companion-src}" && pwd)"
 LIB_DIR="$COMPANION_SRC/companion/lib"
 LIBS_DIR="$COMPANION_SRC/companion/libs"
 UNIDBG_DIR="$COMPANION_SRC/companion/lib-unidbg"
@@ -40,6 +40,12 @@ if [ ! -d "$COMPANION_SRC/companion" ] || [ ! -d "$COMPANION_SRC/android-bridge"
   echo "[build]        需要包含 android-bridge/src 与 companion/src 两个模块" >&2
   echo "[build]        用 COMPANION_SRC_DIR=/path/to/source 指定" >&2
   exit 1
+fi
+
+# Third-party jars are downloaded from Maven Central and checked against the
+# committed hashes. The Java source itself is included in this repository.
+if [ -f "$COMPANION_SRC/deps.lock.json" ]; then
+  node "$(to_path "$ROOT/companion-build/fetch-deps.js")" "$(to_path "$COMPANION_SRC")"
 fi
 
 rm -rf "$BUILD" "$DIST"

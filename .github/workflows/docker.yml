@@ -26,8 +26,7 @@ env:
 
 jobs:
   # ------------------------------------------------------------------
-  # 1) 从 Java 解析层源码编译 companion-service.jar（CatVod 运行时）
-  #    源码仓库由仓库变量 COMPANION_REPO 指定（owner/name），未设置则直接失败。
+  # 1) 从本仓库 companion-src 编译 companion-service.jar（CatVod 运行时）
   # ------------------------------------------------------------------
   companion:
     name: build companion jar
@@ -36,26 +35,11 @@ jobs:
     steps:
       - name: Checkout tvbox-bridge
         uses: actions/checkout@v4
-        with:
-          path: tvbox-bridge
 
-      - name: Check companion source repo
-        env:
-          COMPANION_REPO: ${{ vars.COMPANION_REPO }}
-        run: |
-          if [ -z "$COMPANION_REPO" ]; then
-            echo "::error::未设置仓库变量 COMPANION_REPO。请在 Settings → Secrets and variables → Actions → Variables 添加 COMPANION_REPO（格式 owner/name），指向包含 android-bridge/src 与 companion/src 的源码仓库。"
-            exit 1
-          fi
-          echo "companion 源码仓库: $COMPANION_REPO"
-
-      - name: Checkout companion source
-        uses: actions/checkout@v4
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
         with:
-          repository: ${{ vars.COMPANION_REPO }}
-          path: companion-src
-          fetch-depth: 1
-          token: ${{ secrets.COMPANION_REPO_TOKEN || github.token }}
+          node-version: '22'
 
       - name: Setup JDK 17
         uses: actions/setup-java@v4
@@ -64,14 +48,9 @@ jobs:
           java-version: '17'
 
       - name: Build companion-service.jar
-        working-directory: tvbox-bridge
-        env:
-          # 显式指定源码位置，避免依赖 checkout 的相对目录布局
-          COMPANION_SRC_DIR: ${{ github.workspace }}/companion-src
         run: bash companion-build/build.sh
 
       - name: Check Unicorn native runtime
-        working-directory: tvbox-bridge
         run: |
           java -Xmx64m \
             -cp 'companion/dist/companion-service.jar:companion/dist/lib-unidbg/*' \
@@ -81,7 +60,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: companion-dist
-          path: tvbox-bridge/companion/dist
+          path: companion/dist
           retention-days: 3
           if-no-files-found: error
 

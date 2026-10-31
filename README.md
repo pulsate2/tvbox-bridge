@@ -41,7 +41,7 @@ TVBox / CatVod 解析链路的简易 Web 复刻，用于验证 **饭太硬** 等
 
 CMS 请求带多级兜底（无参数 → `ac=videolist` → `ac=detail` → 纯 `t/pg`），JSON 与 XML 双解析；`ext` 为 http(s) 时作为备用 endpoint，否则作为 `extend` 参数。
 
-### 1.4 Java 伴随进程（`companion/` + `android-bridge/`）
+### 1.4 Java 伴随进程（`companion-src/`）
 
 - `Main` 启动 `AndroidBridge.serve(0)`，打印 `[COMPANION_READY] PORT=<n>` 供上层解析；`--stdin-watch` / `--parent-pid` 防止孤儿进程。
 - `SpiderServer` 暴露：
@@ -75,6 +75,7 @@ server.js                     Node 后端：配置解码、CMS/Spider 调度、�
 public/                       前端：站点列表、分类、海报墙、详情、选集、hls.js 播放器
 companion-build/build.sh      从 Java 解析层源码构建 companion-service.jar（JDK 17+）
 companion-build/overlay/      上游缺失的 shim（见下）
+companion-src/                本仓库内的 Java 解析层源码、上游许可和依赖锁定清单
 scripts/test-fty.js           饭太硬源可用性自动测试
 docs/API.md                   第三方接口文档
 docs/openapi.yaml             OpenAPI 3.0 规范
@@ -84,7 +85,7 @@ Dockerfile / docker-compose.yml
 
 要点：
 
-1. **原样复用 Java 解析层**：直接编译源码树里的 `android-bridge/src` + `companion/src`，打包成自包含 jar，运行时 `java -jar companion-service.jar --port=0`，由 Node 解析握手行并调用 RPC。
+1. **原样复用 Java 解析层**：直接编译本仓库 `companion-src/` 下的 `android-bridge/src` + `companion/src`，打包成自包含 jar，运行时 `java -jar companion-service.jar --port=0`，由 Node 解析握手行并调用 RPC。
 2. **补齐上游缺失的 Android shim**（按需补，不整类替换 —— 上游会持续演进，整类替换会让子类的 `@Override` 失效）：
    - `android.graphics.drawable.Drawable$ConstantState`：`ProxyOrigin` 在 `playerContent` 路径调用 `getConstantState().newDrawable()`，老版本上游缺失会抛 `NoClassDefFoundError`（表现为「站点暂不可用 (stage=call)」）。构建脚本检测后按需注入成员，新版本上游已自带则跳过。
    - `android.widget.ListAdapter`：`Pan` 初始化时引用，上游仍缺失，由 overlay 提供。
@@ -154,9 +155,11 @@ docker compose up -d
 
 ### 3.2 源码运行
 
-前置：Node.js 18+（实测 22）、JDK 17+、本机可访问 GitHub（或配置代理）。
+前置：Node.js 18+（实测 22）、JDK 17+、bash、curl，本机可访问 Maven Central 与 GitHub（或配置代理）。
 
 Linux 构建还需要 C 编译器、CMake 3.16+、make、curl 和 tar，用于修复 Unicorn 原生库。Debian/Ubuntu 可先安装 `build-essential cmake curl`。
+
+Java 源码已包含在 `companion-src/`，无需另外克隆上游仓库或设置 `COMPANION_REPO`。构建会按 `companion-src/deps.lock.json` 自动下载第三方 JAR，校验大小与 SHA-256；已有依赖通过校验后直接复用。
 
 ```bash
 npm install
@@ -181,8 +184,8 @@ node scripts/test-fty.js --sites 荐片,光影,厂长
 
 `.github/workflows/docker.yml`：
 
-1. `companion` job：checkout 本仓库 + 解析层源码（仓库变量 `COMPANION_REPO` 指定，`COMPANION_REPO_TOKEN` 提供私有仓库权限）→ JDK 17 → `companion-build/build.sh` → 上传 `companion/dist` 产物。未设置 `COMPANION_REPO` 时该 job 会明确报错并停止。
-2. `docker` job：下载产物 → Buildx 构建（`linux/amd64`）→ **冒烟测试**（起容器、等 `/api/health`、校验无 token 401 / 带 token 200 级通过鉴权 / 查询参数鉴权）→ 推送 `ghcr.io/<owner>/<repo>`。
+1. `companion` job：checkout 本仓库 → Node.js 22 + JDK 17 → 从 `companion-src/` 编译，自动获取并校验固定版本依赖，修复 Linux Unicorn → 原生运行检查 → 上传 `companion/dist` 产物。不需要 companion 仓库变量或额外的仓库 token。
+2. `docker` job：下载产物 → Buildx 构建（`linux/amd64`）→ **冒烟测试**（起容器、等 `/api/health`、在最终 JRE 内执行 Unicorn 检查、校验无 token 401 / 带 token 通过鉴权 / 查询参数鉴权）→ 推送 `ghcr.io/<owner>/<repo>`。
 
 推送标签：分支名、`sha-<hash>`、`v1.2.3` 与 `v1.2`（tag 触发）、默认分支的 `latest`。PR 只构建不推送。
 

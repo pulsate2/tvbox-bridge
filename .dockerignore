@@ -6,6 +6,7 @@ node_modules
 docs
 scripts
 companion-build
+companion-src
 companion/jars
 **/*.log
 README.md
