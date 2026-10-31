@@ -31,7 +31,8 @@ jobs:
   # ------------------------------------------------------------------
   companion:
     name: build companion jar
-    runs-on: ubuntu-latest
+    # Its native library must also run on the Debian bookworm image (glibc 2.36).
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout tvbox-bridge
         uses: actions/checkout@v4
@@ -68,6 +69,13 @@ jobs:
           # 显式指定源码位置，避免依赖 checkout 的相对目录布局
           COMPANION_SRC_DIR: ${{ github.workspace }}/companion-src
         run: bash companion-build/build.sh
+
+      - name: Check Unicorn native runtime
+        working-directory: tvbox-bridge
+        run: |
+          java -Xmx64m \
+            -cp 'companion/dist/companion-service.jar:companion/dist/lib-unidbg/*' \
+            com.tvbox.bridge.diagnostics.UnicornCheck
 
       - name: Upload companion dist
         uses: actions/upload-artifact@v4
@@ -157,6 +165,12 @@ jobs:
             exit 1
           fi
           echo "health: $(cat /tmp/health.json)"
+
+          # /api/health does not start GuardDecryptor. Exercise the same native
+          # dependency inside the final JRE image before publishing it.
+          docker exec smoke java -Xmx64m \
+            -cp '/app/companion/dist/companion-service.jar:/app/companion/dist/lib-unidbg/*' \
+            com.tvbox.bridge.diagnostics.UnicornCheck
 
           # 无 token → 401
           code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18787/api/sites)

@@ -95,6 +95,7 @@ Dockerfile / docker-compose.yml
 7. **JDK 17 可运行**：上游发布基线是 JDK 21，但依赖字节码是 61（Java 17），仅有的 Java 21 `module-info.class` 在打包时删除后即可用 17 运行。
 8. **数据目录改名**：构建时把上游写死的运行时目录名替换为 `.tvbox_bridge`（载荷缓存 / prefs / sdcard），镜像与用户目录里不会出现上游品牌目录。
 9. **一步解析 + 鉴权**：`/api/resolve` 输入片名直接返回可播放地址；`BRIDGE_TOKEN(S)` 开启后所有接口需 token，代理出的 `stream` 自动带上调用方 token。
+10. **Linux Guard 解密修复**：Maven 的 `unicorn-1.0.15.jar` 中 Linux JNI 库因静态库链接顺序缺少 27 个 QEMU 符号。Linux 构建会从固定版本的官方源码重新链接当前平台的原生资源，保留原有 Java 接口；CI 在构建机和最终 JRE 镜像内执行 ARM/AArch64 指令、hook 与 context 检查。
 
 ### API 一览
 
@@ -154,6 +155,8 @@ docker compose up -d
 ### 3.2 源码运行
 
 前置：Node.js 18+（实测 22）、JDK 17+、本机可访问 GitHub（或配置代理）。
+
+Linux 构建还需要 C 编译器、CMake 3.16+、make、curl 和 tar，用于修复 Unicorn 原生库。Debian/Ubuntu 可先安装 `build-essential cmake curl`。
 
 ```bash
 npm install

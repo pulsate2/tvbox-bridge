@@ -63,6 +63,11 @@ echo "[build] 源码: $COMPANION_SRC"
       done
 )
 
+# Native/JNI diagnostic used by CI and by the final container smoke test.
+CHECK_TARGET="$SRC/android-bridge/src/com/tvbox/bridge/diagnostics/UnicornCheck.java"
+mkdir -p "$(dirname "$CHECK_TARGET")"
+cp "$ROOT/companion-build/overlay/com/tvbox/bridge/diagnostics/UnicornCheck.java" "$CHECK_TARGET"
+
 # 补丁 1：android.widget.ListAdapter —— 饭太硬载荷的 Pan 初始化时引用，上游没有。
 LIST_ADAPTER="$SRC/android-bridge/src/android/widget/ListAdapter.java"
 if [ ! -f "$LIST_ADAPTER" ]; then
@@ -225,6 +230,10 @@ cp "$UNIDBG_DIR"/*.jar "$DIST/lib-unidbg/"
 # AndroidBridge 也会在 jar 同目录 / libs 下找 bcprov；复制一份进 libs 以覆盖相对路径候选
 mkdir -p "$DIST/libs"
 cp "$LIBS_DIR"/*.jar "$DIST/libs/" 2>/dev/null || true
+
+# Maven Unicorn 1.0.15 的 Linux JNI 库缺少 QEMU 符号，Guard 解密会在加载库时失败。
+# 在分发副本中重建原生资源；不修改上游依赖或其他平台的资源。
+bash "$ROOT/companion-build/build-unicorn-linux.sh" "$DIST/lib-unidbg/unicorn-1.0.15.jar"
 
 echo "[build] done: $DIST/companion-service.jar"
 ls -lh "$DIST/companion-service.jar" "$DIST"/*.jar | head
