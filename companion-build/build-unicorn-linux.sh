@@ -46,7 +46,11 @@ cmake -S "$SOURCE" -B "$CORE_BUILD" \
   -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
   -DUNICORN_BUILD_SHARED=OFF \
   -DUNICORN_ARCH="arm aarch64"
-cmake --build "$CORE_BUILD" --target unicorn --parallel "${UNICORN_BUILD_JOBS:-2}"
+# In this upstream static build, the four ARM archives are separate targets;
+# building only "unicorn" does not produce them. Build every archive used by JNI.
+cmake --build "$CORE_BUILD" \
+  --target unicorn arm-softmmu armeb-softmmu aarch64-softmmu aarch64eb-softmmu \
+  --parallel "${UNICORN_BUILD_JOBS:-2}"
 
 cmake -S "$ROOT/companion-build/unicorn" -B "$JNI_BUILD" \
   -DCMAKE_BUILD_TYPE=Release \

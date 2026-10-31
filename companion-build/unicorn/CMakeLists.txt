@@ -3,6 +3,21 @@ project(unicorn_java C)
 
 find_package(JNI REQUIRED)
 
+set(UNICORN_ARCHIVES
+    "${UNICORN_BUILD_DIR}/libunicorn.a"
+    "${UNICORN_BUILD_DIR}/libarm-softmmu.a"
+    "${UNICORN_BUILD_DIR}/libarmeb-softmmu.a"
+    "${UNICORN_BUILD_DIR}/libaarch64-softmmu.a"
+    "${UNICORN_BUILD_DIR}/libaarch64eb-softmmu.a"
+)
+foreach(ARCHIVE IN LISTS UNICORN_ARCHIVES)
+    if(NOT EXISTS "${ARCHIVE}")
+        message(FATAL_ERROR
+            "Missing Unicorn static archive: ${ARCHIVE}. Build all enabled core targets before configuring JNI."
+        )
+    endif()
+endforeach()
+
 add_library(unicorn_java SHARED
     "${UNICORN_SOURCE_DIR}/bindings/java/unicorn_Unicorn.c"
 )
@@ -20,11 +35,7 @@ target_compile_options(unicorn_java PRIVATE -O3 -DNDEBUG)
 target_link_options(unicorn_java PRIVATE -Wl,--no-undefined)
 target_link_libraries(unicorn_java PRIVATE
     -Wl,--start-group
-    "${UNICORN_BUILD_DIR}/libunicorn.a"
-    "${UNICORN_BUILD_DIR}/libarm-softmmu.a"
-    "${UNICORN_BUILD_DIR}/libarmeb-softmmu.a"
-    "${UNICORN_BUILD_DIR}/libaarch64-softmmu.a"
-    "${UNICORN_BUILD_DIR}/libaarch64eb-softmmu.a"
+    ${UNICORN_ARCHIVES}
     -Wl,--end-group
     m pthread rt
 )
